@@ -1,0 +1,22 @@
+version: 1
+workflow: stale-issue-closer
+inputs: [GitHub issue number]
+outputs: [Closed issue, only after human approval]
+permissions:
+  github:
+    read:  [issue.read]
+    write: [issue.close]
+    deny:  [issue.label, issue.edit]
+side_effects:
+  - id: close_issue
+    action: github.issue.close
+    max_per_run: 1
+    requires_approval: true
+    on_replay: skip
+    replay_key: issue_number
+approval_points: [github.issue.close]
+recovery_strategy: { mode: fail_loud, description: fail visibly }
+replay_semantics: { mode: idempotent, key: issue_number }
+dependencies: [GitHub API]
+state: none
+observability: [Gateway audit log]

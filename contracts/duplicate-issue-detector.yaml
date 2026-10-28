@@ -1,0 +1,51 @@
+version: 1
+workflow: duplicate-issue-detector
+
+inputs:
+  - GitHub issue number (from webhook trigger)
+outputs:
+  - One comment on the triggering issue, only if a duplicate is found
+
+# Machine-checkable permissions: every action is named, nothing implied.
+permissions:
+  github:
+    read:  [issue.read]
+    write: [issue.comment]
+    deny:  [issue.close, issue.label, issue.edit]
+  openai:
+    read:  [embeddings.create]
+  qdrant:
+    read:  [collection.search]
+    write: [collection.upsert]
+    deny:  [collection.delete]
+    scope: { collection: issues }     # any call touching another collection is blocked
+
+# Every write action above MUST appear here (the linter enforces this).
+side_effects:
+  - id: comment_on_issue
+    action: github.issue.comment
+    max_per_run: 1
+    on_replay: skip                   # never comment twice on the same issue
+    replay_key: issue_number
+    condition: { fact: similarity, op: ">=", value: 0.85 }
+  - id: store_vector
+    action: qdrant.collection.upsert
+    max_per_run: 1
+    on_replay: allow                  # upsert by issue number = overwrite, safe
+
+# Facts are measured by the gateway from real tool results, NOT claimed by the agent.
+facts:
+  - { name: similarity, from_action: qdrant.collection.search, result_key: max_score }
+
+approval_points: []                   # intentionally empty: it only comments
+
+recovery_strategy:
+  mode: fail_loud
+  description: If a dependency is down the run must end as failed, never as success.
+replay_semantics:
+  mode: idempotent
+  key: issue_number
+dependencies: [GitHub API, OpenAI Embeddings API, Qdrant]
+state: One vector per seen issue in the Qdrant collection `issues`.
+observability:
+  - Gateway audit log (every call, allowed or blocked)
